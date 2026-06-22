@@ -6,9 +6,12 @@ os.environ["PYTORCH_MPS_LOW_WATERMARK_RATIO"] = "0.0"
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 import torch
 import soundfile as sf
+import warnings
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -16,7 +19,16 @@ from pydantic import BaseModel
 from typing import Optional
 from contextlib import asynccontextmanager
 
-# 1. Monkey patch VoiceEncoder.to to always run on CPU (workaround for PyTorch MPS LSTM bug)
+# --- Suppress third-party noise during startup ---
+warnings.filterwarnings("ignore", category=FutureWarning, module="diffusers")
+warnings.filterwarnings("ignore", message=".*resize.*does not match the required output shape.*")
+warnings.filterwarnings("ignore", category=UserWarning, message=".*An output with one or more elements was resized")
+
+# Suppress huggingface_hub progress bars on stderr (they overlap with uvicorn logs)
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+os.environ["HUGGINGFACE_TOOLING_DISABLE_PROGRESS_BARS"] = "1"
+
+# Monkey patch VoiceEncoder.to to always run on CPU (workaround for PyTorch MPS LSTM bug)
 from chatterbox.models.voice_encoder.voice_encoder import VoiceEncoder
 
 original_ve_to = VoiceEncoder.to
@@ -24,7 +36,7 @@ def patched_ve_to(self, *args, **kwargs):
     return original_ve_to(self, "cpu")
 VoiceEncoder.to = patched_ve_to
 
-# 2. Detect device and patch torch.load for MPS loading compatibility
+# Detect device and patch torch.load for MPS loading compatibility
 device = "mps" if torch.backends.mps.is_available() else "cpu"
 map_location = torch.device(device)
 
@@ -50,8 +62,13 @@ MODEL = None
 def get_model():
     global MODEL
     if MODEL is None:
-        print(f"Loading Chatterbox Multilingual model on device: {device}...")
+        sys.stderr.write("\033[90mLoading Chatterbox Multilingual model on device: {}...\033[0m\n".format(device))
+        sys.stderr.flush()
+        t0 = time.monotonic()
         MODEL = ChatterboxMultilingualTTS.from_pretrained(device=device, t3_model="v3")
+        elapsed = time.monotonic() - t0
+        sys.stderr.write("\033[92mModel loaded in {:.1f}s\033[0m\n".format(elapsed))
+        sys.stderr.flush()
     return MODEL
 
 @asynccontextmanager
@@ -210,15 +227,27 @@ async def speech_api(request: SpeechRequest):
             os.remove(temp_out_path)
 
 if __name__ == "__main__":
+    import logging
     import uvicorn
     
-    print(f"Starting Chatterbox TTS API on http://127.0.0.1:8997")
-    print(f"Device: {device}")
-    print(f"ffmpeg: {ffmpeg_exe}")
+    # Suppress uvicorn's noisy startup / connection logs
+    log = logging.getLogger("uvicorn")
+    log.setLevel(logging.WARNING)
+    log_access = logging.getLogger("uvicorn.access")
+    log_access.disabled = True
+    
+    sys.stderr.write("\n{}Chatterbox TTS API\033[0m\n".format("\033[92m"))
+    sys.stderr.write("  {} {}\n".format("\033[90mDevice:\033[0m", device))
+    sys.stderr.write("  {} {}\n".format("\033[90membed path:\033[0m", ffmpeg_exe))
+    sys.stderr.write("  {}\n\n{}\033[0m".format(
+        "\033[90mServer: http://127.0.0.1:8997\033[0m",
+        "\033[90mLoading model in background...\033[0m"
+    ))
+    sys.stderr.flush()
 
     uvicorn.run(
         app,
         host="127.0.0.1",
         port=8997,
-        log_level="info"
+        log_level="critical"
     )
