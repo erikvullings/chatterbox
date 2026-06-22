@@ -31,6 +31,12 @@ dependencies = [
     "omegaconf"
 ]
 
+[project.optional-dependencies]
+serve = [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0,<1",
+]
+
 [project.urls]
 Homepage = "https://github.com/resemble-ai/chatterbox"
 Repository = "https://github.com/resemble-ai/chatterbox"

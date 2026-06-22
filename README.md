@@ -117,6 +117,90 @@ ta.save("test-2.wav", wav, model.sr)
 ```
 See `example_tts.py` and `example_vc.py` for more examples.
 
+## OpenAI-Compatible TTS API Server
+
+A FastAPI server is included (`openai_tts_api.py`) that serves Dutch TTS via an OpenAI-compatible endpoint. It uses the Chatterbox Multilingual V3 model with `language_id="nl"` for text-to-speech, outputting MP3 or WAV files via FFmpeg.
+
+### Setting up on M4 Max MacBook
+
+```shell
+# Install the project and server dependencies
+pip install -e ".[serve]"
+
+# Run the server (uses MPS on your Apple Silicon GPU)
+python openai_tts_api.py
+```
+
+The server starts at `http://0.0.0.0:8997/v1/audio/speech`.
+
+### Usage examples
+
+```shell
+# Basic Dutch text to speech (default "naive" voice using model's default speaker)
+curl http://localhost:8997/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "chatterbox",
+    "input": "Hallo wereld, dit is een test van de Chatterbox tekst-naar-spraak API.",
+    "voice": "naive",
+    "response_format": "mp3"
+  }' \
+  --silent --output dutch.mp3
+
+# Use a custom voice (place reference WAV in voices/ directory, e.g., voices/my_voice.wav)
+curl http://localhost:8997/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "chatterbox",
+    "input": "Dit klinkt alsof ik jouw stem gebruik.",
+    "voice": "my_voice.wav",
+    "response_format": "mp3"
+  }' \
+  --silent --output my_voice_out.mp3
+
+# Use English instead of Dutch
+curl http://localhost:8997/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "chatterbox",
+    "input": "Hello world, this is a text-to-speech test in English.",
+    "voice": "naive",
+    "language_id": "en",
+    "response_format": "mp3"
+  }' \
+  --silent --output english.mp3
+
+# Output WAV instead of MP3
+curl http://localhost:8997/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "chatterbox",
+    "input": "Dit is een wav output test.",
+    "voice": "naive",
+    "response_format": "wav"
+  }' \
+  --silent --output dutch.wav
+
+# Adjust playback speed (0.25 to 4.0)
+curl http://localhost:8997/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "chatterbox",
+    "input": "Voorbeeld van langzame speech in het Nederlands.",
+    "voice": "naive",
+    "speed": 0.5,
+    "response_format": "mp3"
+  }' \
+  --silent --output slow_dutch.mp3
+```
+
+### M4 Max / MPS notes
+
+- The server automatically detects MPS and runs on your Apple Silicon GPU.
+- Two MPS patches are applied for PyTorch compatibility: VoiceEncoder LSTM workaround (forces to CPU) and `torch.load` map_location patch.
+- Memory allocator is set to 0% high/low watermark to avoid memory spikes during model loading.
+- Default Dutch voice uses the model's default speaker embedding from the multilingual checkpoint. To clone a specific voice, provide a reference WAV file via the `voice` parameter.
+
 ## Supported Languages
 The general-purpose Chatterbox Multilingual model supports the following languages:
 
